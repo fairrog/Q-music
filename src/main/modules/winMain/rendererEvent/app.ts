@@ -25,8 +25,9 @@ import {
 import { quitApp } from '@main/app'
 import { getAllThemes, removeTheme, saveTheme, setPowerSaveBlocker } from '@main/utils'
 import { openDirInExplorer } from '@common/utils/electron'
-import { addQQFavoriteSong, getMusicAccountDailySongIds, getMusicAccountMusicUrl, getMusicAccountPlaylistDetail, getMusicAccountPlaylists, getMusicAccountStatus, getQQDailyKeyStatus, logoutMusicAccount, openMusicAccountLogin, openQQDailyKeyPage, reportMusicAccountPlayback, saveQQDailyApiKey, type MusicAccountDailyResult, type MusicAccountLoginResult, type MusicAccountLogoutResult, type MusicAccountMusicUrlRequest, type MusicAccountMusicUrlResult, type MusicAccountPlaybackReportRequest, type MusicAccountPlaybackReportResult, type MusicAccountPlaylistDetailResult, type MusicAccountPlaylistsResult, type MusicAccountProvider, type QQDailyKeySaveResult } from '../musicAccount'
+import { addQQFavoriteSong, getMusicAccountDailySongIds, getMusicAccountMusicUrl, getMusicAccountPlaylistDetail, getMusicAccountPlaylists, getMusicAccountStatus, getQQDailyKeyStatus, logoutMusicAccount, openMusicAccountLogin, openQQDailyKeyPage, reportMusicAccountPlayback, saveQQDailyApiKey, setNeteaseFavoriteSong, type MusicAccountDailyResult, type MusicAccountLoginResult, type MusicAccountLogoutResult, type MusicAccountMusicUrlRequest, type MusicAccountMusicUrlResult, type MusicAccountPlaybackReportRequest, type MusicAccountPlaybackReportResult, type MusicAccountPlaylistDetailResult, type MusicAccountPlaylistsResult, type MusicAccountProvider, type QQDailyKeySaveResult } from '../musicAccount'
 import { type QQFavoriteRequest, type QQFavoriteResult } from '@common/types/qqFavorite'
+import { type NeteaseFavoriteRequest, type NeteaseFavoriteResult } from '@common/types/neteaseFavorite'
 import { startAccountTransfer, getAccountTransferState, cancelAccountTransfer } from '../accountTransfer'
 import type { AccountTransferInfo, AccountTransferState } from '@common/types/accountTransfer'
 import { getCloudConfig, getSavedCloudPassword, importCloudTracks, listCloudTracks, saveCloudConfig, saveCloudPassword, selectCloudProvider, uploadCloudTrack, type CloudConfig, type CloudTrack } from '../cloudLibrary'
@@ -154,6 +155,7 @@ export default () => {
     return getMusicAccountStatus()
   })
   mainHandle<QQFavoriteRequest, QQFavoriteResult>(WIN_MAIN_RENDERER_EVENT_NAME.music_account_qq_favorite_add, async({ params }) => addQQFavoriteSong(params))
+  mainHandle<NeteaseFavoriteRequest, NeteaseFavoriteResult>(WIN_MAIN_RENDERER_EVENT_NAME.music_account_netease_favorite_set, async({ params }) => setNeteaseFavoriteSong(params))
   mainHandle<MusicAccountProvider, MusicAccountLoginResult>(WIN_MAIN_RENDERER_EVENT_NAME.music_account_login, async({ params: provider }) => {
     if (provider == 'tx') cancelAccountTransfer()
     return openMusicAccountLogin(provider)

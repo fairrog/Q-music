@@ -5,6 +5,7 @@ import { markRaw } from '@common/utils/vueTools'
 import * as hotKeys from '@common/hotKey'
 import { APP_EVENT_NAMES, DATA_KEYS, DEFAULT_SETTING } from '@common/constants'
 import { type QQFavoriteRequest, type QQFavoriteResult } from '@common/types/qqFavorite'
+import { type NeteaseFavoriteRequest, type NeteaseFavoriteResult } from '@common/types/neteaseFavorite'
 import type { AccountTransferInfo, AccountTransferState } from '@common/types/accountTransfer'
 
 export const startAccountTransfer = async() => rendererInvoke<AccountTransferInfo>(WIN_MAIN_RENDERER_EVENT_NAME.music_account_transfer_start)
@@ -130,6 +131,9 @@ export const getMusicAccountStatus = async() => {
 }
 export const addQQFavoriteSong = async(songMid: string, action: QQFavoriteRequest['action'] = 'add') => {
   return rendererInvoke<QQFavoriteRequest, QQFavoriteResult>(WIN_MAIN_RENDERER_EVENT_NAME.music_account_qq_favorite_add, { songMid, action })
+}
+export const setNeteaseFavoriteSong = async(songId: string, action: NeteaseFavoriteRequest['action'] = 'add') => {
+  return rendererInvoke<NeteaseFavoriteRequest, NeteaseFavoriteResult>(WIN_MAIN_RENDERER_EVENT_NAME.music_account_netease_favorite_set, { songId, action })
 }
 export const loginMusicAccount = async(provider: MusicAccountProvider) => {
   return rendererInvoke<MusicAccountProvider, MusicAccountLoginResult>(WIN_MAIN_RENDERER_EVENT_NAME.music_account_login, provider)

@@ -28,6 +28,14 @@
 - 官方地址使用独立短时缓存，不覆盖既有音乐源脚本与持久化接口缓存。
 - 播放详情页提供标准、HQ、无损与 Hi-Res 快捷切换，并在换音质时保留播放进度。
 
+## 网易云音乐收藏写回
+
+- 新增「网易云音乐 · 我喜欢的音乐」收藏入口：播放详情页爱心弹层中把当前网易云歌曲写入登录账号的云端收藏，已收藏时再次点击即取消。
+- 主进程新增 `setNeteaseFavoriteSong`：写入前读一次云端收藏 ID 去重，写入后回读核对，不以受理 code 作为到账证明。
+- 把网易云 weapi / eapi 请求体构造抽到 `src/common/utils/neteaseEapi.ts`（不依赖 electron），播放日志上报改为复用同一份实现，行为不变。
+- 新增 `test/neteaseFavorite.test.mts` 与 `test/fixtures/neteaseEapi.json`，覆盖接口路径、eapi 密文固定基准、header/Cookie 编码与收藏请求体。
+- 说明文档见 [docs/netease-favorites.md](./docs/netease-favorites.md)。
+
 ## 榜单与来源标识
 
 - 排行榜请求增加有限重试、响应校验与失效榜单恢复。

@@ -12,6 +12,7 @@
       </button>
       <p v-if="localMessage" :class="$style.message" role="status">{{ $t(localMessage) }}</p>
       <QQFavoriteTarget :music-info="musicInfo" compact :disabled="localBusy" @busy="cloudBusy = $event" />
+      <NeteaseFavoriteTarget :music-info="musicInfo" compact :disabled="localBusy" @busy="cloudBusy = $event" />
       <button type="button" :class="$style.more" :disabled="busy" @click="$emit('more')">{{ $t('player_favorite_more') }} <span aria-hidden="true">›</span></button>
     </section>
   </teleport>
@@ -22,6 +23,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from '@common/uti
 import { checkListExistMusic, addListMusics, removeListMusics } from '@renderer/store/list/action'
 import { loveList } from '@renderer/store/list/state'
 import QQFavoriteTarget from '@renderer/components/common/QQFavoriteTarget.vue'
+import NeteaseFavoriteTarget from '@renderer/components/common/NeteaseFavoriteTarget.vue'
 
 const props = defineProps({ dark: Boolean, anchor: { type: Object, default: null }, musicInfo: { type: Object, required: true } })
 const emit = defineEmits(['close', 'more'])

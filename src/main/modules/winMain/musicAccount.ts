@@ -2,7 +2,7 @@ import { BrowserWindow, safeStorage, session, shell, type Session, type WebConte
 import { getProxy } from '@main/utils'
 import { setWindowNavigationPolicy } from '@main/utils/navigationPolicy'
 import getStore from '@main/utils/store'
-import { constants, createCipheriv, createHash, publicEncrypt, randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { getQQCredentials, getQQRequestComm, getQQWebRequestComm } from '@common/utils/qqCredentials'
 import { signQQRequest } from '@common/utils/qqSign'
 import { collectQQPlaylistIds } from '@common/utils/qqPlaylist'
@@ -11,6 +11,8 @@ import { closeOfficialAccountLogin, openOfficialAccountLogin } from './officialA
 import { allowAccountLoginNavigation, upgradeAccountLoginNavigation } from './accountLoginNavigation'
 import { fitAccountLoginWindow, getAccountLoginBounds } from './accountLoginLayout'
 import { getKugouDailyHashes, getKugouPlaylistHashes, getKugouPlaylists, logoutKugou, openKugouLogin, readKugouSession } from './kugouAccount'
+import { buildNeteaseCookieHeader, buildNeteaseEapiForm, buildNeteaseEapiHeader, buildNeteaseLikeData, buildNeteaseWeapiForm, neteaseEapiBase, neteaseLikePath, neteaseLikedIdsPath } from '@common/utils/neteaseEapi'
+import { type NeteaseFavoriteRequest, type NeteaseFavoriteResult } from '@common/types/neteaseFavorite'
 
 export type MusicAccountProvider = 'tx' | 'wy' | 'kg'
 
@@ -145,37 +147,8 @@ let qqDailyKeyTask: Promise<QQDailyKeySaveResult> | null = null
 const qqDailyKeyStoreName = 'music_account_credentials'
 const qqDailyKeyStoreField = 'qqDailyApiKey'
 const qqDailyKeyPage = 'https://y.qq.com/n/ryqq_v2/qqmusic_skills'
-const neteaseIv = Buffer.from('0102030405060708')
-const neteasePresetKey = Buffer.from('0CoJUm6Qyw8W8jud')
-const neteaseEapiKey = Buffer.from('e82ckenh8dichen8')
-const neteaseBase62 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-const neteasePublicKey = '-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDgtQn2JZ34ZC28NWYpAUd98iZ37BUrX/aKzmFbt7clFSs6sXqHauqKWqdtLkF2KexO40H1YTX8z2lSgBBOAxLsvaklV8k4cBFK9snQXE9/DDaFt6Rr7iVZMldczhC0JNgTz+SHXT6CBHuX3e9SdB1Ua44oncaTWz7OBGLbCiK45wIDAQAB\n-----END PUBLIC KEY-----'
 const neteasePlaybackLogPath = '/api/feedback/weblog'
 const playbackReportTimeout = 10_000
-
-const aesEncrypt = (buffer: Buffer, key: Buffer) => {
-  const cipher = createCipheriv('aes-128-cbc', key, neteaseIv)
-  return Buffer.concat([cipher.update(buffer), cipher.final()])
-}
-
-const buildNeteaseWeapiForm = (data: Record<string, unknown>) => {
-  const secretKey = Buffer.from(Array.from(randomBytes(16), value => neteaseBase62.charCodeAt(value % neteaseBase62.length)))
-  const firstPass = aesEncrypt(Buffer.from(JSON.stringify(data)), neteasePresetKey).toString('base64')
-  const params = aesEncrypt(Buffer.from(firstPass), secretKey).toString('base64')
-  const reversedKey = Buffer.from(secretKey).reverse()
-  const paddedKey = Buffer.concat([Buffer.alloc(128 - reversedKey.length), reversedKey])
-  const encSecKey = publicEncrypt({ key: neteasePublicKey, padding: constants.RSA_NO_PADDING }, paddedKey).toString('hex')
-  return new URLSearchParams({ params, encSecKey })
-}
-
-const buildNeteaseEapiForm = (path: string, data: Record<string, unknown>) => {
-  const text = JSON.stringify(data)
-  const digest = createHash('md5').update(`nobody${path}use${text}md5forencrypt`).digest('hex')
-  const payload = `${path}-36cd479b6b5-${text}-36cd479b6b5-${digest}`
-  const cipher = createCipheriv('aes-128-ecb', neteaseEapiKey, null)
-  const params = Buffer.concat([cipher.update(Buffer.from(payload)), cipher.final()]).toString('hex').toUpperCase()
-  return new URLSearchParams({ params })
-}
 
 const isAllowedHost = (provider: MusicAccountProvider, target: string) => {
   return allowAccountLoginNavigation(provider, target, providerConfig[provider].domains)
@@ -1100,6 +1073,107 @@ export const reportMusicAccountPlayback = async(request: MusicAccountPlaybackRep
   } catch (error) {
     console.warn(`[musicAccount] ${request.provider} playback report unavailable`, error)
     return unavailable((isQQMusicLoginRequiredError(error) || (error instanceof Error && error.message == 'login_required')) ? 'login_required' : 'unavailable')
+  }
+}
+
+const neteaseFavoriteTimeout = 12_000
+
+// eapi 写接口：header 既进请求体也编码成 Cookie，收藏/歌单这类写操作都依赖这一层。
+const requestNeteaseEapi = async<T extends { code?: number }>(
+  accountSession: Session,
+  context: NonNullable<Awaited<ReturnType<typeof getNeteasePlaybackContext>>>,
+  path: string,
+  data: Record<string, unknown>,
+): Promise<T> => {
+  const header = buildNeteaseEapiHeader(context, String(Date.now()))
+  const response = await accountSession.fetch(`${neteaseEapiBase}/eapi${path.slice(4)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
+      Cookie: buildNeteaseCookieHeader(header),
+      Origin: 'https://music.163.com',
+      Referer: 'https://music.163.com/',
+      'User-Agent': 'NeteaseMusicDesktop/3.1.10.5100',
+    },
+    body: buildNeteaseEapiForm(path, { ...data, e_r: true, header }),
+    signal: AbortSignal.timeout(neteaseFavoriteTimeout),
+  })
+  if (response.status == 401 || response.status == 403) {
+    accountValidationCache.delete('wy')
+    throw new Error('login_required')
+  }
+  if (!response.ok) throw new Error('unavailable')
+  const result = await response.json() as T
+  const code = Number(result.code)
+  if (code == 301 || code == 401) {
+    accountValidationCache.delete('wy')
+    throw new Error('login_required')
+  }
+  return result
+}
+
+// 读回云端「我喜欢的音乐」全量歌曲 ID，用来确认写入是否真的到账。
+const readNeteaseLikedIds = async(
+  accountSession: Session,
+  context: NonNullable<Awaited<ReturnType<typeof getNeteasePlaybackContext>>>,
+  userId: string,
+) => {
+  const result = await requestNeteaseEapi<{ code?: number, ids?: Array<string | number> }>(
+    accountSession,
+    context,
+    neteaseLikedIdsPath,
+    { uid: Number(userId) },
+  )
+  if (Number(result.code) != 200 || !Array.isArray(result.ids)) return null
+  return result.ids.map(String)
+}
+
+// 收藏写回网易云账号。写入后用只读接口核对，不把受理 code 当成到账证明。
+export const setNeteaseFavoriteSong = async(request: NeteaseFavoriteRequest): Promise<NeteaseFavoriteResult> => {
+  const respond = (
+    status: NeteaseFavoriteResult['status'],
+    extra: Partial<NeteaseFavoriteResult> = {},
+  ): NeteaseFavoriteResult => ({ provider: 'wy', status, ...extra })
+  const songId = String(request.songId ?? '')
+  if (!/^\d+$/.test(songId)) return respond('unsupported')
+  const like = request.action != 'remove'
+  try {
+    if (!await hasLoginCookie('wy')) return respond('login_required')
+    await configureAccountSessionProxy('wy')
+  } catch (error) {
+    console.warn('[musicAccount] wy credential check unavailable', error)
+    return respond('unavailable')
+  }
+
+  try {
+    const accountSession = session.fromPartition(providerConfig.wy.partition)
+    const context = await getNeteasePlaybackContext(accountSession)
+    if (!context) return respond('login_required')
+    const userId = await getNeteaseUserId()
+    if (!userId) return respond('login_required')
+
+    // 已经是目标状态就不再写一次，避免重复请求。
+    const before = await readNeteaseLikedIds(accountSession, context, userId)
+    if (before && before.includes(songId) == like) return respond(like ? 'added' : 'removed', { accountId: userId })
+
+    const result = await requestNeteaseEapi<{ code?: number }>(
+      accountSession,
+      context,
+      neteaseLikePath,
+      buildNeteaseLikeData(songId, userId, like),
+    )
+    const code = Number(result.code)
+    if (code != 200) return respond('rejected', { code, accountId: userId })
+
+    // 受理不等于入库：再读一次，确认云端状态与请求一致。
+    const after = await readNeteaseLikedIds(accountSession, context, userId)
+    if (!after) return respond('unconfirmed', { accountId: userId })
+    return after.includes(songId) == like
+      ? respond(like ? 'added' : 'removed', { accountId: userId })
+      : respond('unconfirmed', { accountId: userId })
+  } catch (error) {
+    console.warn('[musicAccount] wy favorite unavailable', error)
+    return respond((error instanceof Error && error.message == 'login_required') ? 'login_required' : 'unavailable')
   }
 }
 
