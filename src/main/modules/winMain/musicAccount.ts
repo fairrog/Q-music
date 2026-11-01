@@ -1,4 +1,5 @@
 import { BrowserWindow, safeStorage, session, shell, type Session, type WebContents } from 'electron'
+import log from 'electron-log/node'
 import { getProxy } from '@main/utils'
 import { setWindowNavigationPolicy } from '@main/utils/navigationPolicy'
 import getStore from '@main/utils/store'
@@ -11,8 +12,8 @@ import { closeOfficialAccountLogin, openOfficialAccountLogin } from './officialA
 import { allowAccountLoginNavigation, upgradeAccountLoginNavigation } from './accountLoginNavigation'
 import { fitAccountLoginWindow, getAccountLoginBounds } from './accountLoginLayout'
 import { getKugouDailyHashes, getKugouPlaylistHashes, getKugouPlaylists, logoutKugou, openKugouLogin, readKugouSession } from './kugouAccount'
-import { buildNeteaseCookieHeader, buildNeteaseEapiForm, buildNeteaseEapiHeader, buildNeteaseLikeData, buildNeteaseWeapiForm, neteaseEapiBase, neteaseLikePath, neteaseLikedIdsPath } from '@common/utils/neteaseEapi'
-import { type NeteaseFavoriteRequest, type NeteaseFavoriteResult } from '@common/types/neteaseFavorite'
+import { buildNeteaseCookieHeader, buildNeteaseEapiForm, buildNeteaseEapiHeader, buildNeteaseLikeData, buildNeteasePlaylistAddData, buildNeteaseWeapiForm, decryptNeteaseEapi, neteaseEapiBase, neteaseLikePath, neteaseLikedIdsPath, neteasePlaylistTracksPath } from '@common/utils/neteaseEapi'
+import { type NeteaseFavoriteRequest, type NeteaseFavoriteResult, type NeteasePlaylistAddRequest, type NeteasePlaylistAddResult } from '@common/types/neteaseFavorite'
 
 export type MusicAccountProvider = 'tx' | 'wy' | 'kg'
 
@@ -1078,7 +1079,10 @@ export const reportMusicAccountPlayback = async(request: MusicAccountPlaybackRep
 
 const neteaseFavoriteTimeout = 12_000
 
+const neteaseErrorDetail = (error: unknown) => error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+
 // eapi 写接口：header 既进请求体也编码成 Cookie，收藏/歌单这类写操作都依赖这一层。
+// 响应可能是明文 JSON，也可能被 eapi 密钥加密，两种都要能解，否则会误报「暂时不可用」。
 const requestNeteaseEapi = async<T extends { code?: number }>(
   accountSession: Session,
   context: NonNullable<Awaited<ReturnType<typeof getNeteasePlaybackContext>>>,
@@ -1102,14 +1106,33 @@ const requestNeteaseEapi = async<T extends { code?: number }>(
     accountValidationCache.delete('wy')
     throw new Error('login_required')
   }
-  if (!response.ok) throw new Error('unavailable')
-  const result = await response.json() as T
+  const buffer = Buffer.from(await response.arrayBuffer())
+  let result: (T & { code?: number }) | null = null
+  let encrypted = false
+  try {
+    result = JSON.parse(buffer.toString('utf8'))
+  } catch {
+    try {
+      result = JSON.parse(decryptNeteaseEapi(buffer))
+      encrypted = true
+    } catch {
+      result = null
+    }
+  }
+  log.warn(`[musicAccount] wy eapi ${path}`, {
+    status: response.status,
+    bytes: buffer.length,
+    encrypted,
+    code: result?.code,
+  })
+  if (!response.ok) throw new Error(`http_${response.status}`)
+  if (!result) throw new Error('unparsable')
   const code = Number(result.code)
   if (code == 301 || code == 401) {
     accountValidationCache.delete('wy')
     throw new Error('login_required')
   }
-  return result
+  return result as T
 }
 
 // 读回云端「我喜欢的音乐」全量歌曲 ID，用来确认写入是否真的到账。
@@ -1128,6 +1151,21 @@ const readNeteaseLikedIds = async(
   return result.ids.map(String)
 }
 
+// 歌单当前包含的歌曲 ID，用于确认加歌是否真的入库。
+const readNeteasePlaylistTrackIds = async(playlistId: string) => {
+  try {
+    const result = await requestNeteaseWeapi<{
+      code?: number
+      playlist?: { trackIds?: Array<{ id?: string | number }> }
+    }>('/weapi/v6/playlist/detail', { id: playlistId, n: 100000, s: 8 })
+    if (Number(result.code) != 200 || !Array.isArray(result.playlist?.trackIds)) return null
+    return result.playlist.trackIds.map(item => String(item.id ?? ''))
+  } catch (error) {
+    log.warn('[musicAccount] wy playlist detail unavailable', neteaseErrorDetail(error))
+    return null
+  }
+}
+
 // 收藏写回网易云账号。写入后用只读接口核对，不把受理 code 当成到账证明。
 export const setNeteaseFavoriteSong = async(request: NeteaseFavoriteRequest): Promise<NeteaseFavoriteResult> => {
   const respond = (
@@ -1141,8 +1179,8 @@ export const setNeteaseFavoriteSong = async(request: NeteaseFavoriteRequest): Pr
     if (!await hasLoginCookie('wy')) return respond('login_required')
     await configureAccountSessionProxy('wy')
   } catch (error) {
-    console.warn('[musicAccount] wy credential check unavailable', error)
-    return respond('unavailable')
+    log.warn('[musicAccount] wy credential check unavailable', neteaseErrorDetail(error))
+    return respond('unavailable', { detail: neteaseErrorDetail(error) })
   }
 
   try {
@@ -1172,8 +1210,60 @@ export const setNeteaseFavoriteSong = async(request: NeteaseFavoriteRequest): Pr
       ? respond(like ? 'added' : 'removed', { accountId: userId })
       : respond('unconfirmed', { accountId: userId })
   } catch (error) {
-    console.warn('[musicAccount] wy favorite unavailable', error)
-    return respond((error instanceof Error && error.message == 'login_required') ? 'login_required' : 'unavailable')
+    log.warn('[musicAccount] wy favorite unavailable', neteaseErrorDetail(error))
+    return respond((error instanceof Error && error.message == 'login_required') ? 'login_required' : 'unavailable', {
+      detail: neteaseErrorDetail(error),
+    })
+  }
+}
+
+// 把歌曲加进账号里的任意歌单，包括自建歌单和收藏的其他歌单。
+export const addNeteasePlaylistTracks = async(request: NeteasePlaylistAddRequest): Promise<NeteasePlaylistAddResult> => {
+  const respond = (
+    status: NeteasePlaylistAddResult['status'],
+    extra: Partial<NeteasePlaylistAddResult> = {},
+  ): NeteasePlaylistAddResult => ({ provider: 'wy', playlistId: String(request.playlistId ?? ''), status, ...extra })
+  const playlistId = String(request.playlistId ?? '')
+  const songIds = (Array.isArray(request.songIds) ? request.songIds : []).map(String)
+  if (!/^\d+$/.test(playlistId) || !songIds.length || songIds.some(id => !/^\d+$/.test(id))) return respond('unsupported')
+  try {
+    if (!await hasLoginCookie('wy')) return respond('login_required')
+    await configureAccountSessionProxy('wy')
+  } catch (error) {
+    log.warn('[musicAccount] wy credential check unavailable', neteaseErrorDetail(error))
+    return respond('unavailable', { detail: neteaseErrorDetail(error) })
+  }
+
+  try {
+    const accountSession = session.fromPartition(providerConfig.wy.partition)
+    const context = await getNeteasePlaybackContext(accountSession)
+    if (!context) return respond('login_required')
+
+    const body = buildNeteasePlaylistAddData(playlistId, songIds)
+    let result = await requestNeteaseEapi<{ code?: number }>(
+      accountSession,
+      context,
+      neteasePlaylistTracksPath,
+      body,
+    )
+    // 上游怪癖（code 512）：把歌曲 ID 重复一次重试，与参考客户端一致。
+    if (Number(result.code) == 512) {
+      result = await requestNeteaseEapi<{ code?: number }>(accountSession, context, neteasePlaylistTracksPath, {
+        ...body,
+        trackIds: JSON.stringify([...songIds, ...songIds]),
+      })
+    }
+    const code = Number(result.code)
+    if (code != 200) return respond('rejected', { code })
+
+    const after = await readNeteasePlaylistTrackIds(playlistId)
+    if (!after) return respond('unconfirmed')
+    return songIds.every(id => after.includes(id)) ? respond('added') : respond('unconfirmed')
+  } catch (error) {
+    log.warn('[musicAccount] wy playlist add unavailable', neteaseErrorDetail(error))
+    return respond((error instanceof Error && error.message == 'login_required') ? 'login_required' : 'unavailable', {
+      detail: neteaseErrorDetail(error),
+    })
   }
 }
 

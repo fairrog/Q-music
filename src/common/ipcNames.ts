@@ -152,6 +152,7 @@ const modules = {
     music_account_playback_report: 'music_account_playback_report',
     music_account_qq_favorite_add: 'music_account_qq_favorite_add',
     music_account_netease_favorite_set: 'music_account_netease_favorite_set',
+    music_account_netease_playlist_add: 'music_account_netease_playlist_add',
     music_account_qq_daily_key_status: 'music_account_qq_daily_key_status',
     music_account_qq_daily_key_save: 'music_account_qq_daily_key_save',
     music_account_qq_daily_key_page: 'music_account_qq_daily_key_page',

@@ -1,4 +1,4 @@
-import { constants, createCipheriv, createHash, publicEncrypt, randomBytes } from 'node:crypto'
+import { constants, createCipheriv, createDecipheriv, createHash, publicEncrypt, randomBytes } from 'node:crypto'
 
 /**
  * 网易云 weapi / eapi 请求体与请求头构造。
@@ -14,6 +14,7 @@ import { constants, createCipheriv, createHash, publicEncrypt, randomBytes } fro
 export const neteaseEapiBase = 'https://interface.music.163.com'
 export const neteaseLikePath = '/api/song/like'
 export const neteaseLikedIdsPath = '/api/song/like/get'
+export const neteasePlaylistTracksPath = '/api/playlist/manipulate/tracks'
 
 const neteaseIv = Buffer.from('0102030405060708')
 const neteasePresetKey = Buffer.from('0CoJUm6Qyw8W8jud')
@@ -77,4 +78,18 @@ export const buildNeteaseLikeData = (songId: string, userId: string, like: boole
   trackId: Number(songId),
   userid: Number(userId),
   like,
+})
+
+/** eapi 响应可能被同一把 eapi 密钥加密，解不开就当明文处理。 */
+export const decryptNeteaseEapi = (buffer: Buffer) => {
+  const decipher = createDecipheriv('aes-128-ecb', neteaseEapiKey, null)
+  return Buffer.concat([decipher.update(buffer), decipher.final()]).toString('utf8')
+}
+
+/** `/api/playlist/manipulate/tracks` 的请求体：pid 与 trackIds 都要按字符串/数组原样发。 */
+export const buildNeteasePlaylistAddData = (playlistId: string, songIds: string[]) => ({
+  op: 'add',
+  pid: Number(playlistId),
+  trackIds: JSON.stringify(songIds),
+  imme: 'true',
 })

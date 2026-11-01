@@ -32,6 +32,8 @@
 
 - 新增「网易云音乐 · 我喜欢的音乐」收藏入口：播放详情页爱心弹层中把当前网易云歌曲写入登录账号的云端收藏，已收藏时再次点击即取消。
 - 主进程新增 `setNeteaseFavoriteSong`：写入前读一次云端收藏 ID 去重，写入后回读核对，不以受理 code 作为到账证明。
+- eapi 响应按密文处理：先试明文 JSON，失败后用 eapi 密钥解密再解析；解析失败才报错，并把诊断信息写进 `main.log`。
+- 新增「收藏到歌单…」：列出账号歌单，点哪个就把当前歌曲加进去（`/api/playlist/manipulate/tracks`），加完读回歌单详情核对。
 - 把网易云 weapi / eapi 请求体构造抽到 `src/common/utils/neteaseEapi.ts`（不依赖 electron），播放日志上报改为复用同一份实现，行为不变。
 - 新增 `test/neteaseFavorite.test.mts` 与 `test/fixtures/neteaseEapi.json`，覆盖接口路径、eapi 密文固定基准、header/Cookie 编码与收藏请求体。
 - 说明文档见 [docs/netease-favorites.md](./docs/netease-favorites.md)。

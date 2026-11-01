@@ -9,4 +9,18 @@ export interface NeteaseFavoriteResult {
   status: 'added' | 'removed' | 'login_required' | 'unsupported' | 'unavailable' | 'rejected' | 'unconfirmed'
   code?: number
   accountId?: string
+  detail?: string
+}
+
+export interface NeteasePlaylistAddRequest {
+  playlistId: string
+  songIds: string[]
+}
+
+export interface NeteasePlaylistAddResult {
+  provider: 'wy'
+  playlistId: string
+  status: 'added' | 'login_required' | 'unsupported' | 'unavailable' | 'rejected' | 'unconfirmed'
+  code?: number
+  detail?: string
 }

@@ -6,9 +6,12 @@ import {
   buildNeteaseEapiForm,
   buildNeteaseEapiHeader,
   buildNeteaseLikeData,
+  buildNeteasePlaylistAddData,
+  decryptNeteaseEapi,
   neteaseEapiBase,
   neteaseLikePath,
   neteaseLikedIdsPath,
+  neteasePlaylistTracksPath,
 } from '../src/common/utils/neteaseEapi.ts'
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/neteaseEapi.json', import.meta.url), 'utf8')) as Record<string, string>
@@ -18,6 +21,7 @@ test('网易云收藏接口路径保持 /api 前缀与 eapi 域名', () => {
   assert.equal(neteaseEapiBase, 'https://interface.music.163.com')
   assert.equal(neteaseLikePath, '/api/song/like')
   assert.equal(neteaseLikedIdsPath, '/api/song/like/get')
+  assert.equal(neteasePlaylistTracksPath, '/api/playlist/manipulate/tracks')
   assert.equal(`${neteaseEapiBase}/eapi${neteaseLikePath.slice(4)}`, 'https://interface.music.163.com/eapi/song/like')
 })
 
@@ -65,4 +69,21 @@ test('eapi header 同时作为 Cookie，字段顺序与编码保持稳定', () =
 test('收藏请求体把歌曲和账号 ID 转成数字，取消收藏发 false', () => {
   assert.deepEqual(buildNeteaseLikeData('123456', '789', true), { trackId: 123456, userid: 789, like: true })
   assert.deepEqual(buildNeteaseLikeData('123456', '789', false), { trackId: 123456, userid: 789, like: false })
+})
+
+test('eapi 响应可以用同一把密钥解回明文', () => {
+  // 服务端返回的是 AES-128-ECB 密文，解不开就会被误判成「暂时不可用」。
+  const form = buildNeteaseEapiForm('/api/test', { a: 1 })
+  const plain = decryptNeteaseEapi(Buffer.from(String(form.get('params')), 'hex'))
+  assert.match(plain, /^\/api\/test-36cd479b6b5-\{"a":1\}-36cd479b6b5-[0-9a-f]{32}$/)
+  assert.throws(() => decryptNeteaseEapi(Buffer.from('not-a-cipher', 'utf8')))
+})
+
+test('歌单加歌请求体按上游格式序列化', () => {
+  assert.deepEqual(buildNeteasePlaylistAddData('123', ['456', '789']), {
+    op: 'add',
+    pid: 123,
+    trackIds: '["456","789"]',
+    imme: 'true',
+  })
 })
